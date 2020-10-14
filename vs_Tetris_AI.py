@@ -1,7 +1,8 @@
 import numpy as np
 import random
 import sys
-import pygame
+import pygame as pg
+
 
 class CTetrisException(Exception):
     """
@@ -42,19 +43,29 @@ class CTetris():
     """
     реализует логику игры тетрис - движение фигур, сжигание линий, проверку логики
     """
-    def __init__(self,W=12,H=21):
-        self.W = W
-        self.H = H
-        self.Area = np.zeros((W,H),dtype=int) # игровое поле
-        self.Area[0,:]=1
-        self.Area[W-1,:]=1
-        self.Area[:,H-1]=1
-        self.Figure = np.zeros((4,4),dtype=int) # размер фигуры 4х4
-        self.X = 5
-        self.Y = 5
-        self.Score = 0
-        self.initFigure()
-
+    def __init__(self,gameState=None,W=12,H=21):
+        if gameState is None:
+            self.W = W
+            self.H = H
+            self.Area = np.zeros((W,H),dtype=int) # игровое поле
+            self.Area[0,:]=1
+            self.Area[W-1,:]=1
+            self.Area[:,H-1]=1
+            self.Figure = np.zeros((4,4),dtype=int) # размер фигуры 4х4
+            self.X = 5
+            self.Y = 5
+            self.Score = 0
+            self.initFigure()
+        else: # создать новое игровое состояние по образцу
+            self.W = W
+            self.H = H
+            self.Area = np.zeros((W,H),dtype=int) 
+            self.Area[:,:] = gameState.Area[:,:]
+            self.Figure = np.zeros((4,4),dtype=int)
+            self.Figure[:,:] = gameState.Figure[:,:]
+            self.X = gameState.X
+            self.Y = gameState.Y
+            self.Score = gameState.Score
 
     def rotateFigure(self,rightAngle=True):
         rot = np.zeros((4,4),dtype=int)
@@ -100,11 +111,11 @@ class CTetris():
             self.Figure[1:4,0] = 1
             self.Figure[3,1] = 1
 
-        elif figType == 5:
+        elif figType == 5: # Z
             self.Figure[1:3,0] = 1
             self.Figure[2:4,1] = 1
 
-        elif figType == 6:
+        elif figType == 6: # Z
             self.Figure[1:3,1] = 1
             self.Figure[2:4,0] = 1
 
@@ -163,18 +174,16 @@ class CTetris():
         self.Score += score**2
 
 
-class CUserGame():
+class CGameDisplay():
     """
-    реализует интерфейс пользователя к игре тетрис - 1.вывод картинки на экран 2.  события нажатия кнопок 
+    реализует вывод картинки тетриса на экран 
     """
     def __init__(self,tetris,Width=200,Height=400):
-        self.screen = pygame.display.set_mode((Width,Height))
+        self.screen = pg.display.set_mode((Width,Height))
         self.tetris = tetris
         self.Width = Width
         self.Height = Height
-        self.clock = pygame.time.Clock()   
-        self.game_over = False
-        self.tetris.initFigure(0)
+           
         
     def drawCell(self,i,j):
         """ нарисовать заполненную ячейку игрового поля """
@@ -182,7 +191,7 @@ class CUserGame():
         h = self.Height/(self.tetris.H-1)
         x0 = (i-1)*w
         y0 = (j)*h 
-        pygame.draw.rect(self.screen,(255,0,0),[x0,y0,w,h])
+        pg.draw.rect(self.screen,(255,0,0),[x0,y0,w,h])
         
     def redraw(self): 
         self.screen.fill((0, 0, 0))
@@ -191,20 +200,28 @@ class CUserGame():
                 if self.tetris.getCell(i,j): 
                     self.drawCell(i,j)
 
-        pygame.display.update()
+        pg.display.update()
 
-    def main_loop(self):
-        """ бесконечный цикл, обеспечивает вывод картинки и обработку событий управления"""
-        while not self.game_over:
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
+class CUserGame(CGameDisplay):
+    """ реализует управление игрой с клавиатуры """
+    def __init__(self,tetris,Width=200,Height=400):
+        super().__init__(tetris,Width,Height)        
+        self.clock = pg.time.Clock()
+        self.tetris.initFigure()
+    
+    # pylint: disable=no-member
+    def user_loop(self):
+        """ бесконечный цикл, обеспечивает вывод картинки и обработку событий управления """
+        while True:
+            for event in pg.event.get():
+                if event.type == pg.QUIT:
                     sys.exit()
 
-                elif event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_ESCAPE:
+                elif event.type == pg.KEYDOWN:
+                    if event.key == pg.K_ESCAPE:
                         sys.exit(0)
 
-                    elif event.key == pygame.K_LEFT:
+                    elif event.key == pg.K_LEFT:
                         try:
                             self.tetris.testFigure(self.tetris.X-1,self.tetris.Y)
                         except CTetrisException:
@@ -212,7 +229,7 @@ class CUserGame():
                         else:
                             self.tetris.X -= 1
 
-                    elif event.key == pygame.K_RIGHT:
+                    elif event.key == pg.K_RIGHT:
                         try:
                             self.tetris.testFigure(self.tetris.X+1,self.tetris.Y)
                         except CTetrisException:
@@ -220,10 +237,10 @@ class CUserGame():
                         else:
                             self.tetris.X += 1
                     
-                    elif event.key == pygame.K_UP:
+                    elif event.key == pg.K_UP:
                         self.tetris.rotateFigure(False)
                         
-                    elif event.key == pygame.K_DOWN:
+                    elif event.key == pg.K_DOWN:
                         self.tetris.rotateFigure(True)
             try:
                 self.tetris.testFigure(self.tetris.X,self.tetris.Y+1)
@@ -233,21 +250,34 @@ class CUserGame():
                 try:
                     self.tetris.initFigure()
                     self.tetris.testFigure(self.tetris.X,self.tetris.Y)
-                except CTetrisException:
-                    game_over = True
+                except CTetrisException: # не можем расположить новую фигуру, игра закончилась
+                    sys.exit(0)
             else:
                 self.tetris.Y += 1
             finally:
                 self.redraw()
 
-            self.clock.tick(6)
+            self.clock.tick(5)
+        # game_over
+        sys.exit(0)
+    # pylint: enable=no-member
+
+
+class CAutoPlayer(CGameDisplay):
+    """ класс, реализующий автомат игры в тетрис на основе перебора возможных состояний """
+    def __init__(self,tetris,Width=200,Height=400):
+        super().__init__(tetris,Width,Height)
+
+    def test_Route():
+    def auto_loop(self):
+        pass
 
 
 def main():
     random.seed()
     userGame = CUserGame(CTetris())
-    userGame.main_loop()
-
+    userGame.user_loop()
+    
 
 if __name__=='__main__':
     main()
