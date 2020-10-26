@@ -1,6 +1,6 @@
 import numpy as np
 import random
-import sys
+import copy
 import pygame as pg
 
 
@@ -24,49 +24,24 @@ class CTetrisExceptionMoveDown(CTetrisException):
     """
     pass 
 
-class CTetrisExceptionScoreChange(CTetrisException):
-    """
-    cгорели строки, изменился счет
-    """
-    def __init__(self,scoreChange):
-        #super().__init__(self)
-        self.scoreChange = scoreChange
-
-
-class CTetrisExceptionGameOver(CTetrisException):
-    """
-    игра закончилась, невозможно расположить новую фигуру
-    """
-    pass
 
 class CTetris():
     """
     реализует логику игры тетрис - движение фигур, сжигание линий, проверку логики
     """
-    def __init__(self,gameState=None,W=12,H=21):
-        if gameState is None:
-            self.W = W
-            self.H = H
-            self.Area = np.zeros((W,H),dtype=int) # игровое поле
-            self.Area[0,:]=1
-            self.Area[W-1,:]=1
-            self.Area[:,H-1]=1
-            self.Figure = np.zeros((4,4),dtype=int) # размер фигуры 4х4
-            self.X = 5
-            self.Y = 5
-            self.Score = 0
-            self.initFigure()
-        else: # создать новое игровое состояние по образцу
-            self.W = W
-            self.H = H
-            self.Area = np.zeros((W,H),dtype=int) 
-            self.Area[:,:] = gameState.Area[:,:]
-            self.Figure = np.zeros((4,4),dtype=int)
-            self.Figure[:,:] = gameState.Figure[:,:]
-            self.X = gameState.X
-            self.Y = gameState.Y
-            self.Score = gameState.Score
-
+    def __init__(self,W=12,H=21):
+        self.W = W
+        self.H = H
+        self.Area = np.zeros((W,H),dtype=int) # игровое поле
+        self.Area[0,:]=1
+        self.Area[W-1,:]=1
+        self.Area[:,H-1]=1
+        self.Figure = np.zeros((4,4),dtype=int) # размер фигуры 4х4
+        self.X = 5
+        self.Y = 5
+        self.Score = 0
+        self.initFigure()
+    
     def rotateFigure(self,rightAngle=True):
         rot = np.zeros((4,4),dtype=int)
         for a in range(4):
@@ -156,12 +131,13 @@ class CTetris():
         
 
     def removeLines(self):
-        """ удалить полные линии игрового поля, сдвинуть игровое поле вниз"""
+        """ удалить полные линии игрового поля, сдвинуть игровое поле вниз. Возвращает изменение счета"""
         def isFullLine(lineNum):
             for i in range(self.W):
                 if self.Area[i,lineNum] == 0:
                     return False
             return True
+
         repeat_again = True
         score = 0
         while repeat_again:
@@ -172,7 +148,7 @@ class CTetris():
                     repeat_again = True
                     score += 1           
         self.Score += score**2
-
+        return score**2
 
 class CGameDisplay():
     """
@@ -193,14 +169,17 @@ class CGameDisplay():
         y0 = (j)*h 
         pg.draw.rect(self.screen,(255,0,0),[x0,y0,w,h])
         
-    def redraw(self): 
-        self.screen.fill((0, 0, 0))
-        for i in range(self.tetris.W):
-            for j in range(self.tetris.H):
-                if self.tetris.getCell(i,j): 
-                    self.drawCell(i,j)
-
-        pg.display.update()
+    def redraw(self,tetr = None): 
+        if tetr is None:
+            self.redraw(self.tetris)
+        else:
+            self.screen.fill((0, 0, 0))
+            for i in range(tetr.W):
+                for j in range(tetr.H):
+                    if tetr.getCell(i,j): 
+                        self.drawCell(i,j)
+            pg.display.update() 
+            
 
 class CUserGame(CGameDisplay):
     """ реализует управление игрой с клавиатуры """
@@ -215,11 +194,11 @@ class CUserGame(CGameDisplay):
         while True:
             for event in pg.event.get():
                 if event.type == pg.QUIT:
-                    sys.exit()
+                    pg.quit()
 
                 elif event.type == pg.KEYDOWN:
                     if event.key == pg.K_ESCAPE:
-                        sys.exit(0)
+                        pg.quit()
 
                     elif event.key == pg.K_LEFT:
                         try:
@@ -251,7 +230,7 @@ class CUserGame(CGameDisplay):
                     self.tetris.initFigure()
                     self.tetris.testFigure(self.tetris.X,self.tetris.Y)
                 except CTetrisException: # не можем расположить новую фигуру, игра закончилась
-                    sys.exit(0)
+                    pg.quit()
             else:
                 self.tetris.Y += 1
             finally:
@@ -259,7 +238,8 @@ class CUserGame(CGameDisplay):
 
             self.clock.tick(5)
         # game_over
-        sys.exit(0)
+        #sys.exit(0)
+        pg.quit()
     # pylint: enable=no-member
 
 
@@ -267,8 +247,38 @@ class CAutoPlayer(CGameDisplay):
     """ класс, реализующий автомат игры в тетрис на основе перебора возможных состояний """
     def __init__(self,tetris,Width=200,Height=400):
         super().__init__(tetris,Width,Height)
+        self.clock = pg.time.Clock()
 
-    def test_Route():
+
+    def test_route(self,tetris,figure_code,x_position):
+        """ проверить разыгрывание конкретной фигуры figure_code в сессии игры tetris в позиции"""
+        tetris.initFigure(figure_code)
+        try:
+            tetris.testFigure(x_position,tetris.Y)
+        except CTetrisException as E:
+            raise E # передаем прерывание вверх
+        tetris.X = x_position
+        while True:
+            try:
+                tetris.testFigure(x_position,tetris.Y+1)
+            except CTetrisException:
+                # фигура больше не может двигаться вниз
+                tetris.frostFigure(x_position,tetris.Y) # замораживаем ее на игровом поле
+                return tetris.removeLines()
+            else:
+                self.tetris.Y += 1
+            
+        
+    def test_Route(self):
+        tetr = self.tetris
+        for f in range(7):
+            self.test_route(tetr,f,3)
+            self.test_route(tetr,3,5)
+            #self.tetris = tetr
+            self.redraw()
+            pg.time.delay(1000)
+        
+    
     def auto_loop(self):
         pass
 
@@ -277,7 +287,9 @@ def main():
     random.seed()
     userGame = CUserGame(CTetris())
     userGame.user_loop()
-    
+    return 
+    #aiGame = CAutoPlayer(CTetris())
+    #aiGame.test_Route()
 
 if __name__=='__main__':
     main()
