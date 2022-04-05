@@ -2,6 +2,7 @@ import numpy as np
 import random
 import pygame as pg
 import pandas as pd
+import time
 
 
 class CTetrisException(Exception):
@@ -17,11 +18,11 @@ class CTetris():
     def __init__(self,W=12,H=21):
         self.W = W
         self.H = H
-        self.Area = np.zeros((W,H),dtype=int) # игровое поле
+        self.Area = np.zeros((W,H),dtype=np.int8) # игровое поле
         self.Area[0,:]=1 # окаймляем единицами
         self.Area[W-1,:]=1
         self.Area[:,H-1]=1
-        self.Figure = np.zeros((4,4),dtype=int) # размер фигуры 4х4
+        self.Figure = np.zeros((4,4),dtype=np.int8) # размер фигуры 4х4
         self.X = 5
         self.Y = 5
         self.Angle = 0
@@ -172,8 +173,14 @@ class CTetris():
     def writeGameEvent(self):
         """ записать игровое событие, пригодное для дальнейшего обучения
         модели игрока """
-        pass
+        eventS = pd.Series([self.figType,self.X,self.Y,self.Angle,self.Area])
+        eventD = pd.DataFrame((eventS,))
+        eventD.columns = ['figType','figX','figY','figRotation','gameArea']
         
+        try:
+            self.gameEventLog = pd.concat([self.gameEventLog, eventD],ignore_index=True)
+        except Exception:
+            self.gameEventLog = eventD
         
 
 class CGameDisplay():
@@ -216,14 +223,18 @@ class CUserGame(CGameDisplay):
     
     def user_loop(self):
         """ бесконечный цикл, обеспечивает вывод картинки и обработку событий управления """
-        while True:
+        game_loop = True
+        while game_loop:
+            self.redraw()  
+            self.clock.tick(5)
+            
             for event in pg.event.get():
                 if event.type == pg.QUIT:
-                    pg.quit()
+                    game_loop = False
  
                 elif event.type == pg.KEYDOWN:
                     if event.key == pg.K_ESCAPE:
-                        pg.quit()
+                        game_loop = False
                         
                     elif event.key == pg.K_LEFT:
                         self.tetris.moveFigureX(-1)
@@ -247,20 +258,21 @@ class CUserGame(CGameDisplay):
                     self.tetris.moveFigureDown(1)
             except CTetrisException: # фигура не может упасть вниз
                 try:
+                    self.tetris.writeGameEvent()
                     self.tetris.newFigure()
                 except CTetrisException: # не можем расположить новую фигуру, игра закончилась
-                    pg.quit()
-            
-            self.redraw()  
-            self.clock.tick(5)
-
+                    game_loop = False  
+        #
+        pg.quit()
+                    
 def main():
     random.seed()
     userGame = CUserGame(CTetris())
     userGame.user_loop()
+    fileName = time.strftime("%Y_%m_%d_%H%M%S")+'.json'
+    userGame.tetris.gameEventLog.to_json(fileName)
     return 
     
-
 if __name__=='__main__':
     main()
 
