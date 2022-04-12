@@ -4,7 +4,6 @@ import pygame as pg
 import pandas as pd
 import time
 
-
 class CTetrisException(Exception):
     """
     базовое прерывание от логики тетриса
@@ -56,6 +55,22 @@ class CTetris():
             self.X += dx
             return True
         
+    def setFigureShiftValue(self,x_shift):
+        if self.X>x_shift:
+            self.moveFigureX(-1)
+        if self.X<x_shift:
+            self.moveFigureX(1)
+            
+        return 
+            
+    def setFigureRotateValue(self,y_rot):
+        r1 = y_rot%4
+        r2 = self.Angle%4
+        while r1!=r2: # крутим, пока не достигнем нужного поворота
+            self.rotateFigure(1)
+            r2 = self.Angle%4
+            
+            
     def moveFigureDown(self,dy):
         try:
             self.testFigure(self.X,self.Y+dy)
@@ -104,7 +119,6 @@ class CTetris():
         
         self.testFigure(self.X,self.Y)
         
-
 
     def getCell(self,i,j):
         """ проверить заполненность ячейки игрового поля """
@@ -170,12 +184,12 @@ class CTetris():
         self.Score += score**2
         return score**2
     
-    def writeGameEvent(self):
+    def writeGameEvent(self,annot=''):
         """ записать игровое событие, пригодное для дальнейшего обучения
         модели игрока """
-        eventS = pd.Series([self.figType,self.X,self.Y,self.Angle,self.Area])
+        eventS = pd.Series([self.figType,self.X,self.Y,self.Angle,self.Area,annot])
         eventD = pd.DataFrame((eventS,))
-        eventD.columns = ['figType','figX','figY','figRotation','gameArea']
+        eventD.columns = ['figType','figX','figY','figRotation','gameArea','annot']
         
         try:
             self.gameEventLog = pd.concat([self.gameEventLog, eventD],ignore_index=True)
@@ -200,7 +214,12 @@ class CGameDisplay():
         h = self.Height/(self.tetris.H-1)
         x0 = (i-1)*w
         y0 = (j)*h 
-        pg.draw.rect(self.screen,(255,0,0),[x0,y0,w,h])
+        if self.autoPlay:
+            color1 = (0,255,0)
+        else:
+            color1 = (255,0,0)
+            
+        pg.draw.rect(self.screen,color1,[x0,y0,w,h])
         
     def redraw(self,tetr = None): 
         if tetr is None:
@@ -216,17 +235,19 @@ class CGameDisplay():
 
 class CUserGame(CGameDisplay):
     """ реализует управление игрой с клавиатуры """
-    def __init__(self,tetris,Width=200,Height=400):
-        super().__init__(tetris,Width,Height)        
+    def __init__(self,tetris,game_ai):
+        super().__init__(tetris)        
         self.clock = pg.time.Clock()
+        self.game_ai = game_ai
         self.tetris.initFigure()
+        self.autoPlay = False # при старте играет человек
     
     def user_loop(self):
         """ бесконечный цикл, обеспечивает вывод картинки и обработку событий управления """
         game_loop = True
         while game_loop:
             self.redraw()  
-            self.clock.tick(5)
+            self.clock.tick(3)
             
             for event in pg.event.get():
                 if event.type == pg.QUIT:
@@ -250,9 +271,22 @@ class CUserGame(CGameDisplay):
                     elif event.key == pg.K_DOWN:
                         self.tetris.rotateFigure(1)
                         
+                    elif event.key == pg.K_F9:
+                        self.autoPlay = not self.autoPlay
+                        
                     elif event.key == pg.K_SPACE:
                         while self.tetris.moveFigureDown(1):
                             self.redraw()
+                            
+            if self.autoPlay:
+                x_shift,f_rotate,_ = self.game_ai.get_shift_rotate(self.tetris.figType,self.tetris.Area)
+                self.tetris.setFigureShiftValue(x_shift)
+                self.redraw()
+                self.tetris.setFigureRotateValue(f_rotate)
+                self.redraw()
+            print(self.game_ai.get_shift_rotate(self.tetris.figType,self.tetris.Area))
+            print('x:',self.tetris.X,' angl:',self.tetris.Angle%4)
+            
             try:
                 if self.tetris.testFigure(self.tetris.X,self.tetris.Y+1):
                     self.tetris.moveFigureDown(1)
@@ -264,10 +298,73 @@ class CUserGame(CGameDisplay):
                     game_loop = False  
         #
         pg.quit()
-                    
+             
+#######################################################################
+import pickle
+import os
+
+WORK_DIR = 'e:\\tetris_ai'
+
+def get_Fmodel_fileName(figType,figRotate):
+    fileName = 'F'+str(figType)+'R'+str(figRotate)+'.Fpickle'
+    return os.path.join(WORK_DIR,fileName)
+
+def get_Fmodel(figType,figRotate):
+    """ возвращает модель для конкретной фигуры и поворота. Пробует загрузить с диска,
+    при необходимости перестраивает, и сохраняет на диск. """
+    
+    fileName = get_Fmodel_fileName(figType,figRotate)
+    try:
+        with open(fileName, "rb") as f:
+            F = pickle.load(f)
+        return F # успешно загрузили, что нам нужно
+    except Exception as e:
+        print(e)
+        
+    print('rebuild model, please wait..')
+    F0 = rebuild_Fmodel(figType,figRotate)
+    # сохраняем на диск и загружаем с него
+    with open(fileName, "wb") as f:
+        pickle.dump(F0, f)
+    with open(fileName, "rb") as f:
+        F = pickle.load(f)
+    
+    return F
+
+class Tetris_Fmodels():
+    def __init__(self):
+        self.Fmodels = [[None]*4]*7
+        for figType in range(7):
+            for figRotate in range(4):
+                self.Fmodels[figType][figRotate] = get_Fmodel(figType,figRotate)
+    
+    def get_shift_rotate(self,figType,gameArea):
+        """ выдать управляющие сигналы -сдвиг и поворот для заданной фигуры
+        и конфигурации игрового поля """
+        x1= gameArea.reshape(1,-1)
+        #px.imshow(gameArea.reshape(12,-1).transpose()).show()
+        best_shift = 0
+        best_rot = 0
+        best_pp = 0.
+        
+        #print(figType)
+        for r in range(4):
+            p1 = self.Fmodels[figType][r].predict(x1)
+            pp = self.Fmodels[figType][r].predict_proba(x1)[0]
+            pp_i = np.max(pp)
+            if pp_i> best_pp:
+                best_pp= pp_i
+                best_shift = p1.item()
+                best_rot = r
+            #print('predicted shift',p1.item(),'proba',np.max(pp))
+            #print('predict_proba',pp)   
+        #print(' best_shift',best_shift,'best r',best_rot,' best_pp',best_pp)
+        return best_shift,best_rot,best_pp
+            
+#######################################################################       
 def main():
     random.seed()
-    userGame = CUserGame(CTetris())
+    userGame = CUserGame(CTetris(),Tetris_Fmodels())
     userGame.user_loop()
     fileName = time.strftime("%Y_%m_%d_%H%M%S")+'.json'
     userGame.tetris.gameEventLog.to_json(fileName)
@@ -275,5 +372,3 @@ def main():
     
 if __name__=='__main__':
     main()
-
-
